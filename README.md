@@ -2,15 +2,27 @@
 
 A beginner-friendly FastAPI app for Railway that watches Kalshi's public **KXBTC15M** Bitcoin 15-minute markets and publishes simple trading **signals only**.
 
-> This project does **not** place trades. It only reads public market data, keeps a small in-memory state, and shows what the bot would do.
+> This project does **not** place live trades. It only reads public market data, keeps small in-memory state, and now includes a paper trading layer that simulates entries and exits.
 
 ## What this bot does
 
 - Polls Kalshi public market data for the `KXBTC15M` series.
 - Picks the open market that is closing soonest while still leaving enough time to act.
-- Reads the public orderbook.
-- Estimates YES and NO buy prices using the reciprocal orderbook idea.
-- Tracks a simple in-memory position for demo signal logic.
+- Reads the public orderbook using public market data only.
+- Parses sparse or oddly-shaped orderbook payloads more defensively.
+- Logs a safe summary of the top of book so skipped signals are easier to debug.
+- Produces clearer skip reasons such as:
+  - `missing orderbook`
+  - `missing yes side`
+  - `missing no side`
+  - `no usable bid levels`
+  - `synthetic price invalid`
+  - `spread too wide`
+  - `too close to market close`
+  - `no entry in range`
+- Simulates paper entries for `BUY_YES` and `BUY_NO` signals.
+- Simulates paper exits using the existing take profit, stop loss, and force-exit rules.
+- Tracks in-memory paper trade stats and the last 10 closed paper trades.
 - Returns one of these actions:
   - `BUY_YES`
   - `BUY_NO`
@@ -18,7 +30,7 @@ A beginner-friendly FastAPI app for Railway that watches Kalshi's public **KXBTC
   - `EXIT`
   - `SKIP`
 
-Because the state is stored in memory, restarting the Railway app resets the current demo position and recent signal history.
+Because the state is stored only in memory, restarting the Railway app resets the open paper position, paper stats, and recent signal history.
 
 ## Required files in this repo
 
@@ -87,7 +99,7 @@ FORCE_EXIT_SECONDS=45
 MAX_SPREAD=8
 ```
 
-## How to open `/` and `/status`
+## Endpoints
 
 After Railway deploys the app, you will get a public URL that looks something like this:
 
@@ -99,28 +111,34 @@ Then open:
 
 - Home page: `https://your-app-name.up.railway.app/`
 - Status page: `https://your-app-name.up.railway.app/status`
+- Paper trading page: `https://your-app-name.up.railway.app/paper`
 
 On an iPad, you can paste those URLs directly into Safari.
 
-## How to confirm the app is working
+## What `/status` now includes
 
-Open `/` first. You should see JSON with items such as:
+`/status` still keeps the main runtime information, but now also includes:
 
-- app name
-- current status
-- watched series ticker
-- last signal
-- current market ticker
+- `paper_trading_enabled`
+- `paper_stats`
+- `open_paper_position`
+- `recent_closed_paper_trades`
+- `last_skip_reason`
+- `last_diagnostics`
+- `market_snapshot.orderbook_diagnostics`
 
-Then open `/status`. You should see more details, including:
+The diagnostics are designed to stay readable while still showing the important top-of-book structure and why a signal was skipped.
 
-- current config values
-- last poll time
-- current market snapshot
-- current demo position if one exists
-- recent signals kept in memory
+## What `/paper` returns
 
-If you see a `last_error` value, the bot is running but had trouble reading the API or parsing market data. In that case, wait for the next poll or review the Railway logs.
+`/paper` is a cleaner endpoint that returns only paper-trading information:
+
+- whether paper trading is enabled
+- cumulative in-memory paper stats
+- the currently open paper position, if any
+- the last 10 closed paper trades
+
+This keeps paper results easy to inspect without the rest of the runtime bot status.
 
 ## Notes about the signal logic
 
@@ -129,12 +147,26 @@ This app is intentionally simple and readable:
 - It only uses public Kalshi data.
 - It does not use API keys.
 - It does not sign requests.
-- It does not place orders.
-- It keeps only recent signals in memory.
-- It exits demo positions with take profit, stop loss, or a forced exit before close.
+- It does not place live orders.
+- It does not do authenticated order placement.
+- It keeps only recent data in memory.
+- It exits paper positions with take profit, stop loss, or a forced exit before close.
 
-## Next step for future demo trading
+## Important limitation of Railway restarts
 
-A good next step is to add a separate **paper trading** mode that writes fake fills to a small database or log file so you can review performance over time without touching real money.
+Paper trading state is **in memory only**.
 
-After that, you could add charts, richer signal rules, or notifications before thinking about any private trading integration.
+That means a Railway restart, redeploy, or crash will clear:
+
+- the open paper position
+- cumulative paper stats
+- recent closed paper trades
+- recent signal history
+
+If you want longer-lived paper tracking later, the next step would be adding a small database or a file-backed log.
+
+## Assumptions behind this version
+
+- Kalshi's public orderbook can sometimes be sparse, partially missing, or shaped as either dictionaries or price/size arrays.
+- Paper P/L is tracked in simple contract-price dollars and percentages so the bot stays beginner-friendly.
+- The app should remain signal-only for now, with no live trading and no authenticated private API flow.
